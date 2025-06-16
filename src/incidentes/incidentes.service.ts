@@ -6,6 +6,29 @@ import { Incidente, IncidenteDocument } from '../schemas/incidente.schema';
 import { CreateIncidenteDto } from '../dto/create-incidente.dto';
 import { ClasificacionService } from '../services/clasificacion.service';
 
+// Mapa de recursos por tipo de emergencia
+const RECURSOS_POR_TIPO: { [tipo: string]: string[] } = {
+  incendio: ['bomberos', 'ambulancia', 'policía'],
+  robo: ['policía'],
+  accidente: ['ambulancia', 'policía'],
+  temblor: ['protección civil', 'bomberos'],
+  terremoto: ['protección civil', 'bomberos'],
+  inundación: ['protección civil', 'bomberos'],
+  fuego: ['bomberos'],
+  medica: ['ambulancia'],
+  salud: ['ambulancia'],
+  seguridad: ['policía'],
+  rescate: ['rescate', 'ambulancia'],
+  evacuacion: ['protección civil'],
+  desastre: ['protección civil'],
+  crisis: ['protección civil'],
+  emergencia: ['protección civil'],
+  alerta: ['protección civil'],
+  auxilio: ['policía', 'ambulancia'],
+  ayuda: ['protección civil'],
+  problema: ['protección civil']
+};
+
 @Injectable()
 export class IncidentesService {
   private readonly logger = new Logger(IncidentesService.name);
@@ -21,26 +44,40 @@ export class IncidentesService {
     routingKey: 'mensaje.clasificado',
     queue: 'incidentes.queue',
   })
-  async handleEmergencyMessage(@RabbitPayload() payload: CreateIncidenteDto) {
+  async handleEmergencyMessage(@RabbitPayload() payload: any) {
     try {
       this.logger.log(`📨 Mensaje recibido desde WhatsApp: ${JSON.stringify(payload)}`);
-      
+
+      // Validación de campos requeridos
+      const requiredFields = [
+        'from', 'wa_id', 'name', 'message_id', 'timestamp', 'text', 'tipo'
+      ];
+      const missingFields = requiredFields.filter(field => !(field in payload));
+      if (missingFields.length > 0) {
+        this.logger.error(`❌ Faltan campos requeridos en el payload: ${missingFields.join(', ')}`);
+        return;
+      }
+
       const incidente = await this.createIncidente(payload);
       await this.publishToRecursos(incidente);
-      
+
       this.logger.log(`✅ Incidente procesado exitosamente: ${incidente._id}`);
-      
+
     } catch (error) {
-      this.logger.error(`❌ Error procesando mensaje de emergencia: ${error.message}`);
-      throw error;
+      this.logger.error(`❌ Error procesando mensaje de emergencia: ${error.stack || error.message}`);
     }
   }
 
   async createIncidente(createIncidenteDto: CreateIncidenteDto): Promise<IncidenteDocument> {
     const clasificacion = this.clasificacionService.calcularPrioridad(createIncidenteDto);
-    
+
+    // Asignación automática de recursos según tipo
+    const tipoEmergencia = (createIncidenteDto.tipo || '').toLowerCase();
+    const recursos_asignados = RECURSOS_POR_TIPO[tipoEmergencia] || [];
+
     const incidente = new this.incidenteModel({
       ...createIncidenteDto,
+      recursos_asignados,
       prioridad: clasificacion.prioridad,
       estado: 'pendiente',
       score_clasificacion: clasificacion.score,
@@ -49,15 +86,15 @@ export class IncidentesService {
     });
 
     const savedIncidente = await incidente.save();
-    
+
     this.logger.log(
       `💾 Incidente guardado - ID: ${savedIncidente._id}, ` +
       `Tipo: ${clasificacion.tipoEmergencia}, ` +
       `Prioridad: ${clasificacion.prioridad}, ` +
       `Score: ${clasificacion.score}, ` +
-      `Tiempo respuesta: ${clasificacion.tiempoRespuestaSugerido}`
+      `Recursos asignados: ${recursos_asignados.join(', ')}`
     );
-    
+
     return savedIncidente;
   }
 
@@ -81,18 +118,18 @@ export class IncidentesService {
     const updatedIncidente = await this.incidenteModel
       .findByIdAndUpdate(id, updateData, { new: true })
       .exec();
-    
+
     if (!updatedIncidente) {
       this.logger.warn(`⚠️ Incidente no encontrado: ${id}`);
       return null;
     }
-    
+
     this.logger.log(`🔄 Incidente actualizado: ${id}`);
-    
+
     if (updateData.estado) {
       await this.publishStatusUpdate(updatedIncidente);
     }
-    
+
     return updatedIncidente;
   }
 
@@ -112,11 +149,10 @@ export class IncidentesService {
         'incidente.nuevo',
         payload
       );
-      
+
       this.logger.log(`📤 Evento publicado a recursos: ${payload.incidenteId}`);
     } catch (error) {
       this.logger.error(`❌ Error publicando a recursos: ${error.message}`);
-      throw error;
     }
   }
 
@@ -134,7 +170,7 @@ export class IncidentesService {
         'incidente.actualizado',
         payload
       );
-      
+
       this.logger.log(`📤 Actualización de estado publicada: ${payload.incidenteId}`);
     } catch (error) {
       this.logger.error(`❌ Error publicando actualización: ${error.message}`);
