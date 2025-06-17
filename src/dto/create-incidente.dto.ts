@@ -18,7 +18,7 @@ export class CreateIncidenteDto {
   message_id: string;
 
   @IsDateString()
-  timestamp: Date;
+  timestamp: string; // <-- debe ser string, no Date
 
   @IsString()
   @IsNotEmpty()

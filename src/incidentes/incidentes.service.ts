@@ -6,7 +6,6 @@ import { Incidente, IncidenteDocument } from '../schemas/incidente.schema';
 import { CreateIncidenteDto } from '../dto/create-incidente.dto';
 import { ClasificacionService } from '../services/clasificacion.service';
 
-// Mapa de recursos por tipo de emergencia
 const RECURSOS_POR_TIPO: { [tipo: string]: string[] } = {
   incendio: ['bomberos', 'ambulancia', 'policía'],
   robo: ['policía'],
@@ -98,6 +97,15 @@ export class IncidentesService {
     return savedIncidente;
   }
 
+  /**
+   * Filtrado estricto (AND) para estado, tipo y prioridad.
+   */
+  async findByFiltro(filtro: any): Promise<Incidente[]> {
+    this.logger.log(`Filtro recibido en el service: ${JSON.stringify(filtro)}`);
+    // MongoDB hace AND implícito: {estado, tipo, prioridad}
+    return this.incidenteModel.find(filtro).sort({ timestamp: -1 }).exec();
+  }
+
   async findAll(): Promise<Incidente[]> {
     return this.incidenteModel.find().sort({ timestamp: -1 }).exec();
   }
@@ -115,6 +123,8 @@ export class IncidentesService {
   }
 
   async updateIncidente(id: string, updateData: Partial<Incidente>): Promise<Incidente | null> {
+    this.logger.log(`[DEBUG] updateData recibido en updateIncidente: ${JSON.stringify(updateData)}`);
+
     const updatedIncidente = await this.incidenteModel
       .findByIdAndUpdate(id, updateData, { new: true })
       .exec();
@@ -124,7 +134,7 @@ export class IncidentesService {
       return null;
     }
 
-    this.logger.log(`🔄 Incidente actualizado: ${id}`);
+    this.logger.log(`🔄 Incidente actualizado: ${id} con datos: ${JSON.stringify(updateData)}`);
 
     if (updateData.estado) {
       await this.publishStatusUpdate(updatedIncidente);
